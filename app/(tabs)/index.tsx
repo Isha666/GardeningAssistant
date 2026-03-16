@@ -1,4 +1,5 @@
-import Voice from "@react-native-voice/voice"; // Real Voice Native Library
+import { Audio } from "expo-av";
+import * as FileSystem from "expo-file-system/legacy";
 import * as ImagePicker from "expo-image-picker";
 import * as Location from "expo-location";
 import * as Speech from "expo-speech";
@@ -45,7 +46,7 @@ function PestDetectionScreen({ lang, t }) {
   const [loading, setLoading] = useState(false);
 
   // Replace YOUR_LAPTOP_IP with your actual IP e.g. 192.168.1.5
-  const BACKEND_URL = "http://192.168.1.6:5000";
+  const BACKEND_URL = "http://192.168.1.2:5000";
 
   const ui = {
     en: {
@@ -312,10 +313,11 @@ export default function App() {
   const [forecastData, setForecastData] = useState([]);
   const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [isListening, setIsListening] = useState(false); // <--- Using Boolean for native voice
+  const [recording, setRecording] = useState(null);
   const [manualCommand, setManualCommand] = useState("");
 
   const API_KEY = "0ed4badab1bde6ff9948854e82d8c165";
+  const BACKEND_URL = "http://192.168.1.2:5000";
 
   // --- VOICE COMMAND MAPPING ---
   const voiceCommands = {
@@ -345,55 +347,67 @@ export default function App() {
     return unsubscribe;
   }, []);
 
-  // --- NATIVE VOICE API LISTENERS ---
-  useEffect(() => {
-    Voice.onSpeechStart = () => setIsListening(true);
-    Voice.onSpeechEnd = () => setIsListening(false);
-    Voice.onSpeechError = (e) => {
-      setIsListening(false);
-      console.log("Voice Error: ", e.error);
-    };
-    Voice.onSpeechResults = (e) => {
-      if (e.value && e.value.length > 0) {
-        handleVoiceCommand(e.value[0]);
-      }
-    };
-
-    return () => {
-      Voice.destroy().then(Voice.removeAllListeners);
-    };
-  }, [lang]);
-
-  // --- VOICE CONTROL FUNCTIONS ---
   const startRecording = async () => {
     try {
-      setManualCommand("");
-      await Voice.start(lang === "en" ? "en-US" : "ta-IN");
+      const permission = await Audio.requestPermissionsAsync();
+      if (permission.status === "granted") {
+        await Audio.setAudioModeAsync({
+          allowsRecordingIOS: true,
+          playsInSilentModeIOS: true,
+        });
+        const { recording: newRecording } = await Audio.Recording.createAsync(
+          Audio.RecordingOptionsPresets.HIGH_QUALITY,
+        );
+        setRecording(newRecording);
+      }
     } catch (err) {
-      Alert.alert("Mic Error", "Could not start voice recognition.");
+      Alert.alert("Mic Error", "Could not start recording");
     }
   };
 
   const stopAndProcessVoice = async () => {
+    if (!recording) return;
+    const currentRecording = recording;
+    setRecording(null);
+    setLoading(true);
     try {
-      await Voice.stop();
+      await currentRecording.stopAndUnloadAsync();
+      const uri = currentRecording.getURI();
+      if (!uri) throw new Error("No audio recorded");
+
+      // Ensure you use the correct encoding constant
+      const base64Audio = await FileSystem.readAsStringAsync(uri, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+
+      const response = await fetch(`${BACKEND_URL}/transcribe`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" }, // Capitalization matters
+        body: JSON.stringify({
+          audio_base64: base64Audio,
+          lang: lang,
+        }),
+      });
+
+      const data = await response.json();
+      if (data.text) {
+        handleVoiceCommand(data.text);
+      } else {
+        Alert.alert(
+          lang === "ta" ? "புரியவில்லை" : "Not understood",
+          "Please try again.",
+        );
+      }
     } catch (err) {
-      console.log(err);
+      console.error(err);
+      Alert.alert("Error", "Check if server is running and on the same WiFi.");
     }
+    setLoading(false);
   };
 
   const handleVoiceCommand = (text) => {
     const cleanText = text?.toString().toLowerCase().trim();
-    let targetScreen = null;
-
-    // Smartly match the words
-    for (const [key, screen] of Object.entries(voiceCommands)) {
-      if (cleanText.includes(key)) {
-        targetScreen = screen;
-        break;
-      }
-    }
-
+    const targetScreen = voiceCommands[cleanText];
     if (targetScreen) {
       setCurrentScreen(targetScreen);
       setManualCommand("");
@@ -402,11 +416,10 @@ export default function App() {
         { language: lang === "ta" ? "ta-IN" : "en-IN" },
       );
     } else if (text !== "") {
-      Alert.alert("Unrecognized", `I heard: "${text}". Try 1, 2, 3, or 4.`);
+      Alert.alert("Error", "Command not recognized. Try 1, 2, 3, or 4.");
     }
   };
 
-  // --- AUTHENTICATION ---
   const handleAuth = async () => {
     if (!email || !password) {
       Alert.alert("Error", "Please enter both email and password.");
@@ -581,6 +594,7 @@ export default function App() {
         <View style={styles.topBar}>
           <Text style={styles.userLabel}>{user.email}</Text>
           <View style={{ flexDirection: "row", alignItems: "center" }}>
+            {/* MOVED TOGGLE HERE FOR VISIBILITY */}
             <TouchableOpacity
               style={styles.topLangBtn}
               onPress={() => setLang(lang === "en" ? "ta" : "en")}
@@ -626,12 +640,12 @@ export default function App() {
         </TouchableOpacity>
 
         <TouchableOpacity
-          style={[styles.micButton, isListening && styles.micActive]}
+          style={[styles.micButton, recording && styles.micActive]}
           onPressIn={startRecording}
           onPressOut={stopAndProcessVoice}
         >
           <Text style={styles.micText}>
-            {isListening ? "Listening... Release to Stop" : "🎤 Hold to Speak"}
+            {recording ? "Recording... Release to Stop" : "🎤 Hold to Speak"}
           </Text>
         </TouchableOpacity>
 

@@ -21,6 +21,7 @@
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
       "permissions": [
+        "android.permission.RECORD_AUDIO",
         "android.permission.RECORD_AUDIO"
       ],
       "package": "com.anonymous.FarmerAssistant"
@@ -43,17 +44,17 @@
           }
         }
       ],
-      "@react-native-voice/voice"
+      "@react-native-voice/voice",
+      [
+        "expo-image-picker",
+        {
+          "cameraPermission": "Allow access to take crop photos for pest detection."
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
-    },
-    "extra": {
-      "router": {},
-      "eas": {
-        "projectId": "c858bf66-a209-4768-8b2c-bd9262a35972"
-      }
     }
   }
 }
