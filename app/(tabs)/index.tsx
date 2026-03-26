@@ -18,6 +18,7 @@ import {
 
 // --- FIREBASE IMPORTS ---
 import { initializeApp } from "firebase/app";
+import { getFirestore, collection, addDoc, getDocs, query, where, orderBy, deleteDoc, doc } from "firebase/firestore";
 import {
   createUserWithEmailAndPassword,
   getAuth,
@@ -38,6 +39,7 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
+const db = getFirestore(app);
 
 // ─── Pest Detection Screen ────────────────────────────────────────────────────
 function PestDetectionScreen({ lang, t }) {
@@ -298,6 +300,266 @@ const pestStyles = StyleSheet.create({
     alignItems: "center",
   },
   speakBtnText: { color: "#2e7d32", fontWeight: "600" },
+});
+
+
+// ─── Farm Diary Screen ────────────────────────────────────────────────────────
+function FarmDiaryScreen({ lang, t, user }) {
+  const [entries, setEntries] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [showForm, setShowForm] = useState(false);
+  const [viewEntry, setViewEntry] = useState(null);
+
+  // Form fields
+  const [activity, setActivity] = useState("");
+  const [cropStage, setCropStage] = useState("");
+  const [expense, setExpense] = useState("");
+  const [notes, setNotes] = useState("");
+  const [selectedCrop, setSelectedCrop] = useState("");
+
+  const ui = {
+    en: {
+      title: "Farm Diary",
+      newEntry: "+ New Entry",
+      noEntries: "No diary entries yet. Tap '+ New Entry' to start.",
+      activity: "Today's Activity",
+      activityPlaceholder: "What did you do today? (e.g. Irrigated field, Applied fertilizer)",
+      crop: "Crop",
+      cropStage: "Growth Stage",
+      stagePlaceholder: "e.g. Seedling, Flowering, Harvesting",
+      expense: "Expense (₹)",
+      expensePlaceholder: "Amount spent today",
+      notes: "Notes / Observations",
+      notesPlaceholder: "Any observations, weather notes, pest sightings...",
+      save: "Save Entry",
+      cancel: "Cancel",
+      delete: "Delete",
+      close: "Close",
+      saving: "Saving...",
+      crops: ["Rice", "Cotton", "Tomato", "Potato", "Chilli", "Sugarcane", "Other"],
+      today: "Today",
+    },
+    ta: {
+      title: "விவசாய நாட்குறிப்பு",
+      newEntry: "+ புதிய பதிவு",
+      noEntries: "இன்னும் பதிவுகள் இல்லை. '+ புதிய பதிவு' தட்டவும்.",
+      activity: "இன்றைய செயல்பாடு",
+      activityPlaceholder: "இன்று என்ன செய்தீர்கள்? (எ.கா: நீர்ப்பாசனம், உரமிடல்)",
+      crop: "பயிர்",
+      cropStage: "வளர்ச்சி நிலை",
+      stagePlaceholder: "எ.கா: நாற்று, பூக்கும் நிலை, அறுவடை",
+      expense: "செலவு (₹)",
+      expensePlaceholder: "இன்று செலவழித்த தொகை",
+      notes: "குறிப்புகள்",
+      notesPlaceholder: "வானிலை, பூச்சி தாக்குதல், கவலைகள்...",
+      save: "சேமி",
+      cancel: "ரத்து செய்",
+      delete: "நீக்கு",
+      close: "மூடு",
+      saving: "சேமிக்கிறது...",
+      crops: ["நெல்", "பருத்தி", "தக்காளி", "உருளைக்கிழங்கு", "மிளகாய்", "கரும்பு", "மற்றவை"],
+      today: "இன்று",
+    },
+  };
+  const u = ui[lang] || ui.en;
+
+  const cropOptions = ["Rice", "Cotton", "Tomato", "Potato", "Chilli", "Sugarcane", "Other"];
+
+  useEffect(() => {
+    loadEntries();
+  }, []);
+
+  const loadEntries = async () => {
+    setLoading(true);
+    try {
+      const q = query(
+        collection(db, "diary_entries"),
+        where("userId", "==", user.uid),
+        orderBy("createdAt", "desc")
+      );
+      const snapshot = await getDocs(q);
+      const data = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+      setEntries(data);
+    } catch (err) {
+      Alert.alert("Error", "Could not load entries: " + String(err?.message || err));
+    }
+    setLoading(false);
+  };
+
+  const saveEntry = async () => {
+    if (!activity.trim()) {
+      Alert.alert("Error", lang === "ta" ? "செயல்பாடு தேவை" : "Activity is required");
+      return;
+    }
+    setLoading(true);
+    try {
+      const entry = {
+        userId: user.uid,
+        activity: activity.trim(),
+        crop: selectedCrop,
+        cropStage: cropStage.trim(),
+        expense: expense.trim(),
+        notes: notes.trim(),
+        date: new Date().toLocaleDateString("en-IN"),
+        createdAt: new Date().toISOString(),
+      };
+      await addDoc(collection(db, "diary_entries"), entry);
+      setActivity(""); setCropStage(""); setExpense(""); setNotes(""); setSelectedCrop("");
+      setShowForm(false);
+      await loadEntries();
+    } catch (err) {
+      Alert.alert("Error", "Could not save: " + String(err?.message || err));
+    }
+    setLoading(false);
+  };
+
+  const deleteEntry = async (id) => {
+    Alert.alert(
+      lang === "ta" ? "நீக்கவா?" : "Delete Entry?",
+      lang === "ta" ? "இந்த பதிவை நீக்கவா?" : "Are you sure you want to delete this entry?",
+      [
+        { text: lang === "ta" ? "ரத்து" : "Cancel" },
+        { text: lang === "ta" ? "நீக்கு" : "Delete", style: "destructive", onPress: async () => {
+          try {
+            await deleteDoc(doc(db, "diary_entries", id));
+            setViewEntry(null);
+            await loadEntries();
+          } catch (err) {
+            Alert.alert("Error", String(err?.message || err));
+          }
+        }}
+      ]
+    );
+  };
+
+  if (showForm) {
+    return (
+      <ScrollView contentContainerStyle={diaryStyles.container}>
+        <Text style={diaryStyles.title}>{u.title}</Text>
+
+        <Text style={diaryStyles.label}>{u.activity} *</Text>
+        <TextInput style={diaryStyles.input} placeholder={u.activityPlaceholder}
+          value={activity} onChangeText={setActivity} multiline numberOfLines={3} />
+
+        <Text style={diaryStyles.label}>{u.crop}</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
+          {cropOptions.map((c, i) => (
+            <TouchableOpacity key={c}
+              style={[diaryStyles.cropChip, selectedCrop === c && diaryStyles.cropChipSelected]}
+              onPress={() => setSelectedCrop(selectedCrop === c ? "" : c)}>
+              <Text style={[diaryStyles.cropChipText, selectedCrop === c && { color: "#fff" }]}>
+                {u.crops[i]}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+
+        <Text style={diaryStyles.label}>{u.cropStage}</Text>
+        <TextInput style={diaryStyles.input} placeholder={u.stagePlaceholder}
+          value={cropStage} onChangeText={setCropStage} />
+
+        <Text style={diaryStyles.label}>{u.expense}</Text>
+        <TextInput style={diaryStyles.input} placeholder={u.expensePlaceholder}
+          value={expense} onChangeText={setExpense} keyboardType="numeric" />
+
+        <Text style={diaryStyles.label}>{u.notes}</Text>
+        <TextInput style={[diaryStyles.input, { height: 100 }]} placeholder={u.notesPlaceholder}
+          value={notes} onChangeText={setNotes} multiline numberOfLines={4} />
+
+        <TouchableOpacity style={diaryStyles.saveBtn} onPress={saveEntry} disabled={loading}>
+          <Text style={diaryStyles.saveBtnText}>{loading ? u.saving : u.save}</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={diaryStyles.cancelBtn} onPress={() => setShowForm(false)}>
+          <Text style={diaryStyles.cancelBtnText}>{u.cancel}</Text>
+        </TouchableOpacity>
+      </ScrollView>
+    );
+  }
+
+  if (viewEntry) {
+    return (
+      <ScrollView contentContainerStyle={diaryStyles.container}>
+        <Text style={diaryStyles.title}>{u.title}</Text>
+        <View style={diaryStyles.entryCard}>
+          <Text style={diaryStyles.entryDate}>{viewEntry.date}</Text>
+          {viewEntry.crop ? <Text style={diaryStyles.entryTag}>🌾 {viewEntry.crop}</Text> : null}
+          <Text style={diaryStyles.detailLabel}>{u.activity}</Text>
+          <Text style={diaryStyles.detailValue}>{viewEntry.activity}</Text>
+          {viewEntry.cropStage ? (<><Text style={diaryStyles.detailLabel}>{u.cropStage}</Text>
+            <Text style={diaryStyles.detailValue}>{viewEntry.cropStage}</Text></>) : null}
+          {viewEntry.expense ? (<><Text style={diaryStyles.detailLabel}>{u.expense}</Text>
+            <Text style={diaryStyles.detailValue}>₹ {viewEntry.expense}</Text></>) : null}
+          {viewEntry.notes ? (<><Text style={diaryStyles.detailLabel}>{u.notes}</Text>
+            <Text style={diaryStyles.detailValue}>{viewEntry.notes}</Text></>) : null}
+        </View>
+        <TouchableOpacity style={diaryStyles.deleteBtn} onPress={() => deleteEntry(viewEntry.id)}>
+          <Text style={diaryStyles.deleteBtnText}>🗑 {u.delete}</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={diaryStyles.cancelBtn} onPress={() => setViewEntry(null)}>
+          <Text style={diaryStyles.cancelBtnText}>{u.close}</Text>
+        </TouchableOpacity>
+      </ScrollView>
+    );
+  }
+
+  return (
+    <View style={{ flex: 1, backgroundColor: "#f9f9f9" }}>
+      <ScrollView contentContainerStyle={diaryStyles.container}>
+        <Text style={diaryStyles.title}>{u.title}</Text>
+        <TouchableOpacity style={diaryStyles.newEntryBtn} onPress={() => setShowForm(true)}>
+          <Text style={diaryStyles.newEntryBtnText}>{u.newEntry}</Text>
+        </TouchableOpacity>
+        {loading ? (
+          <ActivityIndicator size="large" color="#1b5e20" style={{ marginTop: 40 }} />
+        ) : entries.length === 0 ? (
+          <View style={diaryStyles.emptyState}>
+            <Text style={{ fontSize: 50 }}>📖</Text>
+            <Text style={diaryStyles.emptyText}>{u.noEntries}</Text>
+          </View>
+        ) : (
+          entries.map(entry => (
+            <TouchableOpacity key={entry.id} style={diaryStyles.entryRow} onPress={() => setViewEntry(entry)}>
+              <View style={{ flex: 1 }}>
+                <Text style={diaryStyles.entryDate}>{entry.date}</Text>
+                <Text style={diaryStyles.entryActivity} numberOfLines={1}>{entry.activity}</Text>
+                {entry.crop ? <Text style={diaryStyles.entryMeta}>🌾 {entry.crop}{entry.cropStage ? "  •  " + entry.cropStage : ""}</Text> : null}
+                {entry.expense ? <Text style={diaryStyles.entryMeta}>💰 ₹{entry.expense}</Text> : null}
+              </View>
+              <Text style={{ fontSize: 20, color: "#ccc" }}>›</Text>
+            </TouchableOpacity>
+          ))
+        )}
+      </ScrollView>
+    </View>
+  );
+}
+
+const diaryStyles = StyleSheet.create({
+  container: { flexGrow: 1, padding: 20, paddingTop: 10, backgroundColor: "#f9f9f9" },
+  title: { fontSize: 22, fontWeight: "bold", color: "#1b5e20", textAlign: "center", marginBottom: 16 },
+  newEntryBtn: { backgroundColor: "#1b5e20", padding: 14, borderRadius: 12, alignItems: "center", marginBottom: 16, elevation: 3 },
+  newEntryBtnText: { color: "#fff", fontWeight: "bold", fontSize: 16 },
+  emptyState: { alignItems: "center", marginTop: 60 },
+  emptyText: { color: "#aaa", textAlign: "center", marginTop: 12, fontSize: 14, lineHeight: 22 },
+  entryRow: { backgroundColor: "#fff", borderRadius: 12, padding: 14, marginBottom: 10, elevation: 2, flexDirection: "row", alignItems: "center" },
+  entryDate: { fontSize: 12, color: "#888", marginBottom: 4 },
+  entryActivity: { fontSize: 15, fontWeight: "600", color: "#333", marginBottom: 4 },
+  entryMeta: { fontSize: 12, color: "#666" },
+  entryTag: { fontSize: 13, color: "#2e7d32", fontWeight: "600", marginBottom: 8 },
+  entryCard: { backgroundColor: "#fff", borderRadius: 16, padding: 18, elevation: 4, marginBottom: 16, borderLeftWidth: 5, borderLeftColor: "#1b5e20" },
+  label: { fontSize: 13, fontWeight: "600", color: "#555", marginBottom: 6, marginTop: 12 },
+  input: { backgroundColor: "#fff", borderWidth: 1, borderColor: "#ddd", borderRadius: 10, padding: 12, fontSize: 14, color: "#333" },
+  cropChip: { backgroundColor: "#eee", paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, marginRight: 8 },
+  cropChipSelected: { backgroundColor: "#1b5e20" },
+  cropChipText: { color: "#333", fontWeight: "600", fontSize: 13 },
+  saveBtn: { backgroundColor: "#1b5e20", padding: 16, borderRadius: 12, alignItems: "center", marginTop: 20, elevation: 3 },
+  saveBtnText: { color: "#fff", fontWeight: "bold", fontSize: 16 },
+  cancelBtn: { padding: 14, alignItems: "center", marginTop: 8 },
+  cancelBtnText: { color: "#888", fontSize: 14 },
+  deleteBtn: { backgroundColor: "#ffebee", padding: 14, borderRadius: 12, alignItems: "center", marginBottom: 8 },
+  deleteBtnText: { color: "#d32f2f", fontWeight: "600" },
+  detailLabel: { fontSize: 12, color: "#888", marginTop: 12, marginBottom: 2 },
+  detailValue: { fontSize: 15, color: "#333", lineHeight: 22 },
 });
 
 export default function App() {
@@ -769,7 +1031,9 @@ export default function App() {
           )}
         </ScrollView>
       ) : currentScreen === "pest" ? (
-        <PestDetectionScreen lang={lang} t={t} />
+        <PestDetectionScreen key={lang} lang={lang} t={t} />
+      ) : currentScreen === "diary" ? (
+        <FarmDiaryScreen key={lang} lang={lang} t={t} user={user} />
       ) : (
         <View style={styles.dummy}>
           <Text style={styles.header}>{t.tab_names[currentScreen]}</Text>
